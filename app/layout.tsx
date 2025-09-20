@@ -1,5 +1,6 @@
 import './globals.css'
 import React from 'react'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 
 export const metadata = {
   title: 'RAAG Chatbots',
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </header>
           {children}
         </div>
+        <SpeedInsights />
       </body>
     </html>
   )
