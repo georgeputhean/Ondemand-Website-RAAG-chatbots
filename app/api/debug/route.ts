@@ -32,7 +32,7 @@ export async function GET() {
       embeddedChunks: embeddedCount,
       sampleData,
       milkshakeContent: milkshakeData,
-      hasEmbeddings: embeddedCount > 0
+      hasEmbeddings: (embeddedCount ?? 0) > 0
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
