@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -97,7 +97,7 @@ function ChatInput({ input, setInput, handleSubmit, isLoading }: {
   )
 }
 
-export default function ChatPage() {
+function ChatPageContent() {
   const searchParams = useSearchParams()
   const businessId = searchParams.get('businessId') || searchParams.get('business_id')
   const [messages, setMessages] = useState<Message[]>([])
@@ -292,5 +292,17 @@ export default function ChatPage() {
         isLoading={isLoading}
       />
     </div>
+  )
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+      </div>
+    }>
+      <ChatPageContent />
+    </Suspense>
   )
 }

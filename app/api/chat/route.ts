@@ -96,7 +96,6 @@ export async function POST(request: Request) {
       model: openai('gpt-4o-mini'),
       messages: streamMessages,
       temperature: 0.7,
-      maxTokens: 1000,
     })
 
     // Create a basic streaming response
