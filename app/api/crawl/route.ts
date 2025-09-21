@@ -18,6 +18,8 @@ export async function POST(request: Request) {
   try {
     // Handle both FormData and JSON requests
     const contentType = request.headers.get('content-type')
+    console.log('Crawl API request received:', { contentType })
+
     let url: string, businessId: string | undefined, businessName: string | undefined, customPrompt: string | undefined
     let additionalUrls: string[] = []
     let documents: File[] = []
@@ -37,6 +39,15 @@ export async function POST(request: Request) {
       // Get uploaded documents
       const uploadedDocs = formData.getAll('documents') as File[]
       documents = uploadedDocs.filter(doc => doc instanceof File && doc.size > 0)
+
+      console.log('FormData parsed:', {
+        url,
+        businessId,
+        businessName,
+        customPrompt: customPrompt?.substring(0, 100),
+        additionalUrls,
+        documentsCount: documents.length
+      })
     } else {
       // Handle JSON request (backward compatibility)
       const body = await request.json()
@@ -49,23 +60,35 @@ export async function POST(request: Request) {
     }
 
     // Validate URL
+    console.log('Validating URL:', { url, canParse: url ? URL.canParse(url) : false })
     if (!url || !URL.canParse(url)) {
       throw new Error('Valid URL is required')
     }
+
+    // Check environment variables
+    console.log('Environment check:', {
+      hasFirecrawlKey: !!process.env.FIRECRAWL_API_KEY,
+      hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+      hasSupabaseKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      hasOpenaiKey: !!process.env.OPENAI_API_KEY
+    })
 
     // Use provided businessId or find/create business by URL/domain
     let finalBusinessId: string
 
     if (businessId) {
       // Verify the business exists
+      console.log('Looking up business:', businessId)
       const { data: business, error: fetchError } = await supabaseAdmin
         .from('businesses')
         .select('id')
         .eq('id', businessId)
         .single()
 
+      console.log('Business lookup result:', { business, error: fetchError?.message })
+
       if (fetchError || !business) {
-        throw new Error('Business not found')
+        throw new Error(`Business not found: ${fetchError?.message || 'No business data'}`)
       }
 
       finalBusinessId = businessId
@@ -228,7 +251,15 @@ export async function POST(request: Request) {
       finalBusinessId
     })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Failed' }, { status: 400 })
+    console.error('Crawl API error:', {
+      error: err.message,
+      stack: err.stack,
+      name: err.name
+    })
+    return NextResponse.json({
+      error: err.message || 'Failed to process request',
+      details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    }, { status: 400 })
   }
 }
 
