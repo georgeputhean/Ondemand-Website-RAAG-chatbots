@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { crawlWebsite } from '@/lib/firecrawl'
+import { crawlWebsite } from '@/lib/groqcrawl'
 import { embedText } from '@/lib/openai'
 import { upsertPages, upsertDocument } from '@/lib/rag'
 import { supabaseAdmin } from '@/lib/supabase'
@@ -115,29 +115,105 @@ export async function POST(request: Request) {
 
     const chunkTableName = getChunkTableName(finalBusinessId)
 
-    // Step 2: Clear existing content for this domain
-    // Clear pages table
-    const { error: deleteError } = await supabaseAdmin
+    // Step 2: Get selected URLs BEFORE clearing anything
+    console.log('Checking for selected pages for business:', finalBusinessId)
+    const { data: selectedPages, error: selectedError } = await supabaseAdmin
       .from('pages')
-      .delete()
+      .select('url, title, id, is_selected')
       .eq('business_id', finalBusinessId)
+      .eq('is_selected', true)
 
-    if (deleteError) {
-      console.warn('Failed to clear existing pages:', deleteError)
+    if (selectedError) {
+      console.warn('Failed to fetch selected pages:', selectedError)
+      throw new Error(`Failed to fetch selected pages: ${selectedError.message}`)
     }
 
-    // Clear chunks table (now we know it exists)
-    const { error: chunkDeleteError } = await supabaseAdmin
-      .from(chunkTableName as any)
-      .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000') // Delete all rows
+    console.log('Selected pages found:', selectedPages)
 
-    if (chunkDeleteError) {
-      console.warn('Failed to clear existing chunks:', chunkDeleteError)
+    // Step 3: Conditional processing based on selection
+    let allPages: any[] = []
+    let usingExistingContent = false
+
+    if (selectedPages && selectedPages.length > 0) {
+      console.log(`Found ${selectedPages.length} selected pages - will crawl fresh content`)
+
+      // SELECTED PAGES: Clear existing content and re-scrape
+      // Clear pages table
+      const { error: deleteError } = await supabaseAdmin
+        .from('pages')
+        .delete()
+        .eq('business_id', finalBusinessId)
+
+      if (deleteError) {
+        console.warn('Failed to clear existing pages:', deleteError)
+      }
+
+      // Clear chunks table (now we know it exists)
+      const { error: chunkDeleteError } = await supabaseAdmin
+        .from(chunkTableName as any)
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000') // Delete all rows
+
+      if (chunkDeleteError) {
+        console.warn('Failed to clear existing chunks:', chunkDeleteError)
+      }
+
+      console.log(`Crawling ${selectedPages.length} selected URLs`)
+    } else {
+      console.log('No pages selected - checking for existing content in database')
+
+      // NO SELECTION: Use existing content from database
+      const { data: existingPages, error: existingError } = await supabaseAdmin
+        .from('pages')
+        .select('id, url, title, is_processed')
+        .eq('business_id', finalBusinessId)
+        .eq('is_processed', true)
+
+      if (existingError) {
+        console.error('Failed to fetch existing pages:', existingError)
+        throw new Error(`Failed to check existing content: ${existingError.message}`)
+      }
+
+      if (!existingPages || existingPages.length === 0) {
+        throw new Error('No content available for this business. Please go back and:\n\n1. Click "Discover Website URLs" to find pages\n2. Select which pages you want to include\n3. Then configure your chatbot\n\nAlternatively, add additional URLs or upload documents.')
+      }
+
+      console.log(`Found ${existingPages.length} existing processed pages - using existing content`)
+      usingExistingContent = true
+      // Skip crawling phase entirely when using existing content
     }
 
-    // Step 3: Crawl website and additional URLs
-    let allPages = await crawlWebsite(url)
+    // Step 4: Crawl selected pages (only if pages are selected)
+    if (selectedPages && selectedPages.length > 0) {
+      // Crawl only the selected URLs - no fallback to traditional crawling
+      for (const selectedPage of selectedPages) {
+        try {
+          console.log(`Crawling selected URL: ${selectedPage.url}`)
+
+          // Create a focused crawler for this specific URL
+          const { GroqCrawler } = await import('@/lib/groqcrawl')
+          const crawler = new GroqCrawler({
+            maxDepth: 1, // Only this specific URL, no following links
+            maxPages: 1,
+            onlyMainContent: true,
+            discoverOnly: false // We want full content crawling
+          })
+
+          const crawledPages = await crawler.crawl(selectedPage.url)
+          allPages = allPages.concat(crawledPages)
+
+          // Mark this page as processed in the database
+          await supabaseAdmin
+            .from('pages')
+            .update({ is_processed: true })
+            .eq('id', selectedPage.id)
+
+        } catch (err) {
+          console.warn(`Failed to crawl selected URL ${selectedPage.url}:`, err)
+          // Continue with other pages even if one fails
+        }
+      }
+    }
 
     // Crawl additional URLs if provided
     for (const additionalUrl of additionalUrls) {
@@ -149,10 +225,12 @@ export async function POST(request: Request) {
       }
     }
     
-    // Step 4: Store pages as chunks (without embeddings)
-    await upsertPages(allPages.map(p => ({ businessId: finalBusinessId, url: p.url, title: p.title, content: p.content })))
-    
-    // Step 5: Get all chunks and generate embeddings
+    // Step 5: Store pages as chunks (only if we crawled new content)
+    if (!usingExistingContent && allPages.length > 0) {
+      await upsertPages(allPages.map(p => ({ businessId: finalBusinessId, url: p.url, title: p.title, content: p.content })))
+    }
+
+    // Step 6: Get all chunks and generate embeddings (for both new and existing content)
     const { data: chunks } = await supabaseAdmin
       .from(chunkTableName as any)
       .select('id, content')
@@ -227,19 +305,28 @@ export async function POST(request: Request) {
       }
     }
 
-    const message = documentsProcessed > 0
-      ? `Successfully crawled ${allPages.length} pages, processed ${documentsProcessed} documents, and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
-      : `Successfully crawled ${allPages.length} pages and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
+    // Generate appropriate success message based on processing type
+    let message: string
+    if (usingExistingContent) {
+      message = documentsProcessed > 0
+        ? `Successfully configured chatbot using existing content (${totalChunks} chunks) and processed ${documentsProcessed} new documents. Generated ${processedChunks} new embeddings. Your chatbot is ready!`
+        : `Successfully configured chatbot using existing content with ${totalChunks} chunks and ${processedChunks} new embeddings. Your chatbot is ready!`
+    } else {
+      message = documentsProcessed > 0
+        ? `Successfully crawled ${allPages.length} pages, processed ${documentsProcessed} documents, and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
+        : `Successfully crawled ${allPages.length} pages and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
+    }
 
     return NextResponse.json({
       ok: true,
       message,
       stats: {
-        pagesCrawled: allPages.length,
+        pagesCrawled: usingExistingContent ? 0 : allPages.length,
         documentsProcessed,
         chunksCreated: totalChunks,
         embeddingsGenerated: processedChunks,
-        domainCleared: new URL(url).hostname,
+        usingExistingContent,
+        domainCleared: usingExistingContent ? null : new URL(url).hostname,
         finalBusinessId
       },
       finalBusinessId

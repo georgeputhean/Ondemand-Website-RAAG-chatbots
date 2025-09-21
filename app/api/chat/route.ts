@@ -33,12 +33,17 @@ export async function POST(request: Request) {
     let sources: { title: string; url: string }[] = []
 
     if (matches.length === 0) {
-      // Fallback: try text search if vector search fails
-      const { data: textMatches } = await supabaseAdmin
-        .from('pages')
-        .select('url, title, raw_content')
-        .ilike('raw_content', `%${lastUser.content.toLowerCase()}%`)
-        .limit(5)
+      // Fallback: try text search if vector search fails (only for this business)
+      let textMatches = null
+      if (business_id) {
+        const { data } = await supabaseAdmin
+          .from('pages')
+          .select('url, title, raw_content')
+          .eq('business_id', business_id)
+          .ilike('raw_content', `%${lastUser.content.toLowerCase()}%`)
+          .limit(5)
+        textMatches = data
+      }
 
       console.log('Text search matches:', textMatches?.length || 0)
 
