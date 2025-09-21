@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server'
+import { openai } from '@ai-sdk/openai'
+import { streamText, pipeTextStreamToResponse } from 'ai'
 import { z } from 'zod'
-import { embedText, chatWithContext } from '@/lib/openai'
+import { embedText } from '@/lib/openai'
 import { querySimilar } from '@/lib/rag'
 import { supabaseAdmin } from '@/lib/supabase'
 
@@ -14,92 +15,107 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { messages, business_id } = schema.parse(body)
     const lastUser = [...messages].reverse().find(m => m.role === 'user')
-    if (!lastUser) return NextResponse.json({ error: 'No user message' }, { status: 400 })
+    if (!lastUser) {
+      return new Response('No user message found', { status: 400 })
+    }
 
     console.log('User query:', lastUser.content)
 
     // Generate embedding for the query
     const [queryEmbedding] = await embedText([lastUser.content])
     console.log('Query embedding generated, length:', queryEmbedding.length)
-    
+
     // Find similar chunks from database
-    const matches = await querySimilar(queryEmbedding, 8, business_id) // Scoped to business
+    const matches = await querySimilar(queryEmbedding, 8, business_id)
     console.log('Found matches:', matches.length)
-    
+
+    let context = ''
+    let sources: { title: string; url: string }[] = []
+
     if (matches.length === 0) {
       // Fallback: try text search if vector search fails
       const { data: textMatches } = await supabaseAdmin
         .from('pages')
-        .select('url, title, content')
-        .ilike('content', `%${lastUser.content.toLowerCase()}%`)
+        .select('url, title, raw_content')
+        .ilike('raw_content', `%${lastUser.content.toLowerCase()}%`)
         .limit(5)
-      
+
       console.log('Text search matches:', textMatches?.length || 0)
-      
+
       if (textMatches && textMatches.length > 0) {
-        const context = textMatches.map(m => ({ 
-          url: m.url, 
-          title: m.title, 
-          content: m.content 
-        }))
-        
-        const answer = await chatWithContext(lastUser.content, context)
-        const sources = textMatches.map(m => ({ title: m.title, url: m.url }))
-        
-        return NextResponse.json({ answer, sources })
+        context = textMatches.map(m => `Title: ${m.title}\nContent: ${m.raw_content}`).join('\n\n')
+        sources = textMatches.map(m => ({ title: m.title, url: m.url }))
       }
-      
-      return NextResponse.json({ 
-        answer: "I don't have any information about that topic. Please make sure the website has been crawled and indexed first.",
-        sources: []
-      })
+    } else {
+      // Prepare context from vector matches
+      context = matches.map(m => `Title: ${m.page_title}\nContent: ${m.content}`).join('\n\n')
+
+      // Get unique sources
+      sources = matches.reduce((acc, m) => {
+        if (!acc.find(s => s.url === m.page_url)) {
+          acc.push({ title: m.page_title, url: m.page_url })
+        }
+        return acc
+      }, [] as { title: string; url: string }[])
     }
 
-    // Log match details for debugging
-    console.log('Vector matches:', matches.map(m => ({
-      title: m.page_title,
-      similarity: m.similarity,
-      contentPreview: m.content.substring(0, 100)
-    })))
-
-    // Removed follow-up enforcement; behavior driven by optional system prompt instead
-
-    // Prepare context (already chunked, so no need to slice)
-    const context = matches.map(m => ({
-      url: m.page_url,
-      title: m.page_title,
-      content: m.content
-    }))
-    
-    // Fetch business-specific system prompt if provided
-    let systemPrompt: string | undefined
+    // Fetch business-specific system prompt
+    let systemPrompt = 'You are a helpful assistant. Use the provided context to answer questions accurately and cite your sources.'
     if (business_id) {
       const { data: biz } = await supabaseAdmin
         .from('businesses')
         .select('system_prompt')
         .eq('id', business_id)
         .maybeSingle()
-      systemPrompt = biz?.system_prompt || undefined
+      if (biz?.system_prompt) {
+        systemPrompt = biz.system_prompt
+      }
     }
 
-    // Generate answer with context
-    const answer = await chatWithContext(lastUser.content, context, undefined, systemPrompt)
-    
-    // Get unique sources
-    const uniqueSources = matches.reduce((acc, m) => {
-      if (!acc.find(s => s.url === m.page_url)) {
-        acc.push({ title: m.page_title, url: m.page_url })
+    // Create the context-aware prompt
+    const contextPrompt = context
+      ? `Context:\n${context}\n\nBased on the above context, please answer the following question. If the context doesn't contain relevant information, say so clearly.\n\nQuestion: ${lastUser.content}`
+      : `I don't have any specific context about your question: ${lastUser.content}. Please make sure the website has been crawled and indexed first.`
+
+    // Create messages array for streaming
+    const streamMessages = [
+      { role: 'system' as const, content: systemPrompt },
+      ...messages.slice(0, -1), // All previous messages except the last user message
+      { role: 'user' as const, content: contextPrompt }
+    ]
+
+    // Stream the response
+    const result = streamText({
+      model: openai('gpt-4o-mini'),
+      messages: streamMessages,
+      temperature: 0.7,
+      maxTokens: 1000,
+    })
+
+    // Create a basic streaming response
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of result.textStream) {
+            controller.enqueue(new TextEncoder().encode(`0:"${chunk}"\n`))
+          }
+          controller.close()
+        } catch (error) {
+          controller.error(error)
+        }
       }
-      return acc
-    }, [] as { title: string; url: string }[])
+    })
 
-    console.log('Generated answer:', answer.substring(0, 100))
-    console.log('Sources:', uniqueSources.length)
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Sources': JSON.stringify(sources),
+      },
+    })
 
-    return NextResponse.json({ answer, sources: uniqueSources })
   } catch (err: any) {
     console.error('Chat error:', err)
-    return NextResponse.json({ error: err.message || 'Failed' }, { status: 400 })
+    return new Response('Chat failed: ' + err.message, { status: 500 })
   }
 }
 
