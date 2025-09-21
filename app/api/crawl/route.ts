@@ -18,8 +18,6 @@ export async function POST(request: Request) {
   try {
     // Handle both FormData and JSON requests
     const contentType = request.headers.get('content-type')
-    console.log('Crawl API request received:', { contentType })
-
     let url: string, businessId: string | undefined, businessName: string | undefined, customPrompt: string | undefined
     let additionalUrls: string[] = []
     let documents: File[] = []
@@ -39,15 +37,6 @@ export async function POST(request: Request) {
       // Get uploaded documents
       const uploadedDocs = formData.getAll('documents') as File[]
       documents = uploadedDocs.filter(doc => doc instanceof File && doc.size > 0)
-
-      console.log('FormData parsed:', {
-        url,
-        businessId,
-        businessName,
-        customPrompt: customPrompt?.substring(0, 100),
-        additionalUrls,
-        documentsCount: documents.length
-      })
     } else {
       // Handle JSON request (backward compatibility)
       const body = await request.json()
@@ -60,32 +49,20 @@ export async function POST(request: Request) {
     }
 
     // Validate URL
-    console.log('Validating URL:', { url, canParse: url ? URL.canParse(url) : false })
     if (!url || !URL.canParse(url)) {
       throw new Error('Valid URL is required')
     }
-
-    // Check environment variables
-    console.log('Environment check:', {
-      hasFirecrawlKey: !!process.env.FIRECRAWL_API_KEY,
-      hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-      hasSupabaseKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      hasOpenaiKey: !!process.env.OPENAI_API_KEY
-    })
 
     // Use provided businessId or find/create business by URL/domain
     let finalBusinessId: string
 
     if (businessId) {
       // Verify the business exists
-      console.log('Looking up business:', businessId)
       const { data: business, error: fetchError } = await supabaseAdmin
         .from('businesses')
         .select('id')
         .eq('id', businessId)
         .single()
-
-      console.log('Business lookup result:', { business, error: fetchError?.message })
 
       if (fetchError || !business) {
         throw new Error(`Business not found: ${fetchError?.message || 'No business data'}`)
@@ -185,22 +162,36 @@ export async function POST(request: Request) {
     const totalChunks = chunks?.length || 0
 
     if (chunks && chunks.length > 0) {
+      console.log(`Processing embeddings for ${chunks.length} chunks`)
+
       // Process embeddings in batches to avoid rate limits
       const batchSize = 10
       for (let i = 0; i < chunks.length; i += batchSize) {
         const batch = chunks.slice(i, i + batchSize)
         const contents = batch.map(c => c.content)
-        const vectors = await embedText(contents)
 
-        // Update batch with embeddings
-        for (let j = 0; j < batch.length; j++) {
-          await supabaseAdmin
-            .from(chunkTableName as any)
-            .update({ embedding: vectors[j] })
-            .eq('id', batch[j].id)
+        try {
+          console.log(`Generating embeddings for batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(chunks.length/batchSize)}`)
+          const vectors = await embedText(contents)
+
+          // Update batch with embeddings
+          for (let j = 0; j < batch.length; j++) {
+            await supabaseAdmin
+              .from(chunkTableName as any)
+              .update({ embedding: vectors[j] })
+              .eq('id', batch[j].id)
+          }
+
+          processedChunks += batch.length
+          console.log(`Successfully processed ${processedChunks}/${chunks.length} chunks`)
+        } catch (embeddingError: any) {
+          console.error(`Failed to process embedding batch ${Math.floor(i/batchSize) + 1}:`, {
+            error: embeddingError.message,
+            batchSize: batch.length,
+            contentLengths: contents.map(c => c.length)
+          })
+          throw new Error(`Failed to generate embeddings: ${embeddingError.message}`)
         }
-
-        processedChunks += batch.length
       }
     }
 
@@ -219,6 +210,7 @@ export async function POST(request: Request) {
           )
 
           // Generate embedding for the document
+          console.log(`Generating embedding for document: ${doc.name}`)
           const [docEmbedding] = await embedText([content])
           await supabaseAdmin
             .from('documents')
@@ -227,8 +219,10 @@ export async function POST(request: Request) {
             .eq('filename', doc.name)
 
           documentsProcessed++
-        } catch (err) {
-          console.warn(`Failed to process document ${doc.name}:`, err)
+          console.log(`Successfully processed document: ${doc.name}`)
+        } catch (err: any) {
+          console.error(`Failed to process document ${doc.name}:`, err.message)
+          // Don't throw here, just log and continue with other documents
         }
       }
     }
