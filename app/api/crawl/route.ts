@@ -4,26 +4,35 @@ import { crawlWebsite } from '@/lib/firecrawl'
 import { embedText } from '@/lib/openai'
 import { upsertPages, upsertDocument } from '@/lib/rag'
 import { supabaseAdmin } from '@/lib/supabase'
+import { ensureChunkTable, getChunkTableName } from '@/lib/chunk-table-fallback'
 
 const schema = z.object({
   url: z.string().url(),
+  businessId: z.string().uuid().optional(),
   businessName: z.string().optional(),
-  customPrompt: z.string().optional()
+  customPrompt: z.string().optional(),
+  additionalUrls: z.array(z.string().url()).optional()
 })
 
 export async function POST(request: Request) {
   try {
     // Handle both FormData and JSON requests
     const contentType = request.headers.get('content-type')
-    let url: string, businessName: string | undefined, customPrompt: string | undefined
+    let url: string, businessId: string | undefined, businessName: string | undefined, customPrompt: string | undefined
+    let additionalUrls: string[] = []
     let documents: File[] = []
 
     if (contentType?.includes('multipart/form-data')) {
       // Handle FormData (with file uploads)
       const formData = await request.formData()
       url = formData.get('url') as string
+      businessId = formData.get('businessId') as string || undefined
       businessName = formData.get('businessName') as string || undefined
       customPrompt = formData.get('customPrompt') as string || undefined
+
+      // Get additional URLs
+      const additionalUrlsData = formData.getAll('additionalUrls') as string[]
+      additionalUrls = additionalUrlsData.filter(url => url.trim())
 
       // Get uploaded documents
       const uploadedDocs = formData.getAll('documents') as File[]
@@ -33,8 +42,10 @@ export async function POST(request: Request) {
       const body = await request.json()
       const parsed = schema.parse(body)
       url = parsed.url
+      businessId = parsed.businessId
       businessName = parsed.businessName
       customPrompt = parsed.customPrompt
+      additionalUrls = parsed.additionalUrls || []
     }
 
     // Validate URL
@@ -42,67 +53,114 @@ export async function POST(request: Request) {
       throw new Error('Valid URL is required')
     }
 
-    // Find or create business by URL/domain
-    const domain = new URL(url).hostname
-    const { data: existingBusiness } = await supabaseAdmin
-      .from('businesses')
-      .select('id')
-      .eq('domain', domain)
-      .maybeSingle()
+    // Use provided businessId or find/create business by URL/domain
+    let finalBusinessId: string
 
-    let businessId = existingBusiness?.id as string | undefined
-    if (!businessId) {
-      const { data: created, error: createErr } = await supabaseAdmin
+    if (businessId) {
+      // Verify the business exists
+      const { data: business, error: fetchError } = await supabaseAdmin
         .from('businesses')
-        .insert({
-          url,
-          domain,
-          business_name: businessName,
-          system_prompt: customPrompt
-        })
         .select('id')
-        .single()
-      if (createErr) throw createErr
-      businessId = created.id
-    }
-    // If customPrompt or businessName is provided for an existing business, update it
-    else if (customPrompt || businessName) {
-      const updateData: any = {}
-      if (customPrompt) updateData.system_prompt = customPrompt
-      if (businessName) updateData.business_name = businessName
-
-      await supabaseAdmin
-        .from('businesses')
-        .update(updateData)
         .eq('id', businessId)
+        .single()
+
+      if (fetchError || !business) {
+        throw new Error('Business not found')
+      }
+
+      finalBusinessId = businessId
+
+      // Update business with custom prompt if provided
+      if (customPrompt) {
+        await supabaseAdmin
+          .from('businesses')
+          .update({ system_prompt: customPrompt })
+          .eq('id', finalBusinessId)
+      }
+    } else {
+      // Legacy: Find or create business by URL/domain (for backward compatibility)
+      const domain = new URL(url).hostname
+      const { data: existingBusiness } = await supabaseAdmin
+        .from('businesses')
+        .select('id')
+        .eq('domain', domain)
+        .maybeSingle()
+
+      if (existingBusiness) {
+        finalBusinessId = existingBusiness.id
+      } else {
+        const { data: created, error: createErr } = await supabaseAdmin
+          .from('businesses')
+          .insert({
+            url,
+            domain,
+            business_name: businessName,
+            system_prompt: customPrompt
+          })
+          .select('id')
+          .single()
+        if (createErr) throw createErr
+        finalBusinessId = created.id
+      }
     }
     
-    // Step 1: Clear existing content for this domain
+    // Step 1: Ensure chunk table exists for this business (with fallback)
+    try {
+      const tableName = await ensureChunkTable(finalBusinessId)
+      console.log(`Successfully ensured chunk table exists: ${tableName}`)
+    } catch (err: any) {
+      console.error('Failed to create chunk table:', err)
+      throw new Error(`Could not create chunk table for business: ${finalBusinessId}. ${err.message}`)
+    }
+
+    const chunkTableName = getChunkTableName(finalBusinessId)
+
+    // Step 2: Clear existing content for this domain
+    // Clear pages table
     const { error: deleteError } = await supabaseAdmin
       .from('pages')
       .delete()
-      .eq('business_id', businessId)
-    
+      .eq('business_id', finalBusinessId)
+
     if (deleteError) {
-      console.warn('Failed to clear existing content:', deleteError)
+      console.warn('Failed to clear existing pages:', deleteError)
     }
 
-    // Step 2: Crawl website
-    const pages = await crawlWebsite(url)
+    // Clear chunks table (now we know it exists)
+    const { error: chunkDeleteError } = await supabaseAdmin
+      .from(chunkTableName as any)
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000') // Delete all rows
+
+    if (chunkDeleteError) {
+      console.warn('Failed to clear existing chunks:', chunkDeleteError)
+    }
+
+    // Step 3: Crawl website and additional URLs
+    let allPages = await crawlWebsite(url)
+
+    // Crawl additional URLs if provided
+    for (const additionalUrl of additionalUrls) {
+      try {
+        const additionalPages = await crawlWebsite(additionalUrl)
+        allPages = allPages.concat(additionalPages)
+      } catch (err) {
+        console.warn(`Failed to crawl additional URL ${additionalUrl}:`, err)
+      }
+    }
     
-    // Step 3: Store pages as chunks (without embeddings)
-    await upsertPages(pages.map(p => ({ businessId: businessId!, url: p.url, title: p.title, content: p.content })))
+    // Step 4: Store pages as chunks (without embeddings)
+    await upsertPages(allPages.map(p => ({ businessId: finalBusinessId, url: p.url, title: p.title, content: p.content })))
     
-    // Step 4: Get all chunks and generate embeddings
+    // Step 5: Get all chunks and generate embeddings
     const { data: chunks } = await supabaseAdmin
-      .from('pages')
-      .select('id, content, url, title')
+      .from(chunkTableName as any)
+      .select('id, content')
       .is('embedding', null)
-      .eq('business_id', businessId)
-    
+
     let processedChunks = 0
     const totalChunks = chunks?.length || 0
-    
+
     if (chunks && chunks.length > 0) {
       // Process embeddings in batches to avoid rate limits
       const batchSize = 10
@@ -110,15 +168,15 @@ export async function POST(request: Request) {
         const batch = chunks.slice(i, i + batchSize)
         const contents = batch.map(c => c.content)
         const vectors = await embedText(contents)
-        
+
         // Update batch with embeddings
         for (let j = 0; j < batch.length; j++) {
           await supabaseAdmin
-            .from('pages')
+            .from(chunkTableName as any)
             .update({ embedding: vectors[j] })
             .eq('id', batch[j].id)
         }
-        
+
         processedChunks += batch.length
       }
     }
@@ -130,7 +188,7 @@ export async function POST(request: Request) {
         try {
           const content = await doc.text()
           await upsertDocument(
-            businessId!,
+            finalBusinessId!,
             doc.name,
             doc.type,
             doc.size,
@@ -142,7 +200,7 @@ export async function POST(request: Request) {
           await supabaseAdmin
             .from('documents')
             .update({ embedding: docEmbedding })
-            .eq('business_id', businessId)
+            .eq('business_id', finalBusinessId)
             .eq('filename', doc.name)
 
           documentsProcessed++
@@ -153,21 +211,21 @@ export async function POST(request: Request) {
     }
 
     const message = documentsProcessed > 0
-      ? `Successfully crawled ${pages.length} pages, processed ${documentsProcessed} documents, and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
-      : `Successfully crawled ${pages.length} pages and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
+      ? `Successfully crawled ${allPages.length} pages, processed ${documentsProcessed} documents, and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
+      : `Successfully crawled ${allPages.length} pages and created ${totalChunks} content chunks with embeddings. Your chatbot is ready!`
 
     return NextResponse.json({
       ok: true,
       message,
       stats: {
-        pagesCrawled: pages.length,
+        pagesCrawled: allPages.length,
         documentsProcessed,
         chunksCreated: totalChunks,
         embeddingsGenerated: processedChunks,
-        domainCleared: domain,
-        businessId
+        domainCleared: new URL(url).hostname,
+        finalBusinessId
       },
-      businessId
+      finalBusinessId
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Failed' }, { status: 400 })

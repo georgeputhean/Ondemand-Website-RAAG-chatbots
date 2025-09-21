@@ -1,109 +1,63 @@
 "use client"
-import React, { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function HomePage() {
-  const [url, setUrl] = useState("")
-  const [businessName, setBusinessName] = useState("")
-  const [documents, setDocuments] = useState<FileList | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [jobId, setJobId] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
-  const [customPrompt, setCustomPrompt] = useState("")
+  const router = useRouter()
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setMessage(null)
-    try {
-      setMessage('Starting crawl...')
-
-      // Create FormData to handle file uploads
-      const formData = new FormData()
-      formData.append('url', url)
-      if (businessName) formData.append('businessName', businessName)
-      if (customPrompt) formData.append('customPrompt', customPrompt)
-
-      // Add documents if any
-      if (documents) {
-        for (let i = 0; i < documents.length; i++) {
-          formData.append('documents', documents[i])
-        }
-      }
-
-      const res = await fetch('/api/crawl', {
-        method: 'POST',
-        body: formData,
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to start crawl')
-      
-      if (data.message) {
-        setMessage(data.message)
-        if (data.stats) {
-          setMessage(`${data.message} (${data.stats.pagesCrawled} pages, ${data.stats.chunksCreated} chunks)`)
-        }
-      } else {
-        setMessage('Crawl completed successfully!')
-      }
-      if (data.businessId) {
-        setMessage(prev => (prev ? `${prev} | business_id=${data.businessId}` : `business_id=${data.businessId}`))
-      }
-    } catch (err: any) {
-      setMessage(`Error: ${err.message}`)
-    } finally {
-      setLoading(false)
-    }
+  const handleGetStarted = () => {
+    router.push('/business')
   }
 
   return (
     <main>
-      <div className="bg-white rounded-xl shadow p-6">
-        <h2 className="text-lg font-medium mb-2">Create your website chatbot</h2>
-        <p className="text-sm text-gray-600 mb-4">Enter your business website URL. We'll crawl public pages, index them, and build a chatbot trained on your content.</p>
-        <form onSubmit={onSubmit} className="flex flex-col gap-3">
-          <input
-            type="text"
-            placeholder="Business Name"
-            value={businessName}
-            onChange={(e) => setBusinessName(e.target.value)}
-            className="flex-1 border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <input
-            type="url"
-            required
-            placeholder="https://example.com"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            className="flex-1 border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-gray-700">Upload Documents (Optional)</label>
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.doc,.docx,.txt"
-              onChange={(e) => setDocuments(e.target.files)}
-              className="border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-500">Supported formats: PDF, DOC, DOCX, TXT</p>
+      <div className="text-center">
+        <div className="mb-12">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            Create AI Chatbots from Your Website
+          </h1>
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            Transform your website content into an intelligent chatbot. Train on your pages, documents, and knowledge base to provide instant, accurate customer support.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-8 mb-12">
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <span className="text-blue-600 text-xl">🏢</span>
+            </div>
+            <h3 className="font-semibold mb-2">Register Business</h3>
+            <p className="text-gray-600 text-sm">Start by registering your business and creating a dedicated space for your chatbot data.</p>
           </div>
-          <textarea
-            placeholder="Optional: Add a custom system prompt to guide the bot (tone, policies, etc.)"
-            value={customPrompt}
-            onChange={(e) => setCustomPrompt(e.target.value)}
-            className="w-full min-h-[90px] border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button disabled={loading} className="self-start px-4 py-2 rounded-md bg-blue-600 text-white disabled:opacity-50">
-            {loading ? 'Processing…' : 'Create Bot'}
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <span className="text-green-600 text-xl">⚙️</span>
+            </div>
+            <h3 className="font-semibold mb-2">Configure Chatbot</h3>
+            <p className="text-gray-600 text-sm">Crawl your website, upload documents, and customize your chatbot's behavior and responses.</p>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <span className="text-purple-600 text-xl">💬</span>
+            </div>
+            <h3 className="font-semibold mb-2">Deploy & Chat</h3>
+            <p className="text-gray-600 text-sm">Your chatbot is ready! Test it, embed it on your website, or integrate it into your workflow.</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <button
+            onClick={handleGetStarted}
+            className="bg-blue-600 text-white px-8 py-4 rounded-lg font-semibold text-lg hover:bg-blue-700 transition-colors"
+          >
+            Get Started - Register Your Business
           </button>
-        </form>
-        {message && <p className="mt-3 text-sm text-gray-700">{message}</p>}
-        {jobId && (
-          <p className="mt-2 text-sm">Job ID: <code className="px-1 py-0.5 bg-gray-100 rounded">{jobId}</code></p>
-        )}
-      </div>
-      <div className="mt-8">
-        <a className="text-blue-600 hover:underline" href="/chat">Go to Chat</a>
+
+          <div className="text-gray-500">
+            <p className="text-sm">Already have a business registered? <a href="/configure-chatbot" className="text-blue-600 hover:underline">Configure your chatbot</a></p>
+          </div>
+        </div>
       </div>
     </main>
   )

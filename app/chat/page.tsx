@@ -10,9 +10,9 @@ export default function ChatPage() {
 
   const copyEmbedCode = () => {
     const params = new URLSearchParams(window.location.search)
-    const businessId = params.get('business_id')
+    const businessId = params.get('businessId') || params.get('business_id')
     const embedCode = `<iframe
-  src="${window.location.origin}/chat${businessId ? `?business_id=${businessId}` : ''}"
+  src="${window.location.origin}/chat${businessId ? `?businessId=${businessId}` : ''}"
   width="400"
   height="600"
   frameborder="0"
@@ -34,11 +34,11 @@ export default function ChatPage() {
     setLoading(true)
     try {
       const params = new URLSearchParams(window.location.search)
-      const businessId = params.get('business_id')
+      const businessId = params.get('businessId') || params.get('business_id')
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           messages: newMessages.map(m => ({ role: m.role, content: m.content })),
           business_id: businessId || undefined,
         }),

@@ -56,19 +56,19 @@ export async function POST(request: Request) {
     }
 
     // Log match details for debugging
-    console.log('Vector matches:', matches.map(m => ({ 
-      title: m.title, 
-      similarity: m.similarity, 
-      contentPreview: m.content.substring(0, 100) 
+    console.log('Vector matches:', matches.map(m => ({
+      title: m.page_title,
+      similarity: m.similarity,
+      contentPreview: m.content.substring(0, 100)
     })))
 
     // Removed follow-up enforcement; behavior driven by optional system prompt instead
 
     // Prepare context (already chunked, so no need to slice)
-    const context = matches.map(m => ({ 
-      url: m.url, 
-      title: m.title, 
-      content: m.content 
+    const context = matches.map(m => ({
+      url: m.page_url,
+      title: m.page_title,
+      content: m.content
     }))
     
     // Fetch business-specific system prompt if provided
@@ -87,8 +87,8 @@ export async function POST(request: Request) {
     
     // Get unique sources
     const uniqueSources = matches.reduce((acc, m) => {
-      if (!acc.find(s => s.url === m.url)) {
-        acc.push({ title: m.title, url: m.url })
+      if (!acc.find(s => s.url === m.page_url)) {
+        acc.push({ title: m.page_title, url: m.page_url })
       }
       return acc
     }, [] as { title: string; url: string }[])

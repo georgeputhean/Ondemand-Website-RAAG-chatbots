@@ -25,86 +25,166 @@ function chunkContent(content: string, maxChunkSize = 1000, overlap = 200): stri
 }
 
 export async function upsertPages(pages: { businessId: string; url: string; title: string; content: string; embedding?: number[] | null }[]) {
-  // Gather URLs per business to read existing chunk hashes
-  const businessId = pages[0]?.businessId
-  const urls = Array.from(new Set(pages.map(p => p.url)))
-  const existingMap = new Map<string, { id: string; content_hash: string | null }>()
+  if (!pages.length) return
 
-  if (businessId && urls.length > 0) {
-    const { data: existing } = await supabaseAdmin
-      .from('pages')
-      .select('id, url, chunk_index, content_hash')
-      .eq('business_id', businessId)
-      .in('url', urls)
+  const businessId = pages[0].businessId
 
-    if (existing) {
-      for (const row of existing as any[]) {
-        existingMap.set(`${row.url}::${row.chunk_index}`, { id: row.id, content_hash: row.content_hash })
-      }
+  // Step 1: Get chunk table name (table should already exist)
+  const chunkTableName = `chunks_${businessId.replace(/-/g, '')}`
+
+  // Step 2: Store page metadata in pages table
+  const pageRows = pages.map(page => ({
+    business_id: businessId,
+    url: page.url,
+    title: page.title,
+    raw_content: page.content,
+    is_processed: false
+  }))
+
+  const { data: insertedPages, error: pageError } = await supabaseAdmin
+    .from('pages')
+    .upsert(pageRows, { onConflict: 'business_id,url', ignoreDuplicates: false })
+    .select('id, url, raw_content')
+
+  if (pageError) throw pageError
+
+  // Step 3: Process chunks for each page
+
+  for (const page of insertedPages || []) {
+    const contentChunks = chunkContent(page.raw_content)
+
+    // Clear existing chunks for this page
+    await supabaseAdmin
+      .from(chunkTableName as any)
+      .delete()
+      .eq('page_id', page.id)
+
+    // Insert new chunks
+    const chunkRows = contentChunks.map((chunk, index) => ({
+      page_id: page.id,
+      content: chunk,
+      chunk_index: index,
+      total_chunks: contentChunks.length,
+      embedding: null
+    }))
+
+    if (chunkRows.length > 0) {
+      const { error: chunkError } = await supabaseAdmin
+        .from(chunkTableName as any)
+        .insert(chunkRows)
+
+      if (chunkError) throw chunkError
     }
   }
 
-  const rowsToUpsert: any[] = []
-
-  for (const page of pages) {
-    const contentChunks = chunkContent(page.content)
-    const contentHash = crypto.createHash('sha256').update(page.content).digest('hex')
-
-    for (let i = 0; i < contentChunks.length; i++) {
-      const key = `${page.url}::${i}`
-      const existing = existingMap.get(key)
-      // Skip if hash matches (no change)
-      if (existing && existing.content_hash === contentHash) continue
-
-      rowsToUpsert.push({
-        business_id: page.businessId,
-        url: page.url,
-        title: page.title,
-        content: contentChunks[i],
-        chunk_index: i,
-        total_chunks: contentChunks.length,
-        content_hash: contentHash,
-        // Force re-embedding on changed or new chunks
-        embedding: null
-      })
-    }
-  }
-
-  if (rowsToUpsert.length > 0) {
-    const { error } = await supabaseAdmin
-      .from('pages')
-      .upsert(rowsToUpsert, { onConflict: 'business_id,url,chunk_index', ignoreDuplicates: false })
-    if (error) throw error
-  }
+  // Step 4: Mark pages as processed
+  await supabaseAdmin
+    .from('pages')
+    .update({ is_processed: true })
+    .eq('business_id', businessId)
 }
 
 export async function querySimilar(queryEmbedding: number[], topK = 5, businessId?: string) {
   // If no businessId provided, return empty results
   if (!businessId) return []
 
-  // Try with lower similarity threshold first using the new combined search
-  let { data, error } = await supabaseAdmin.rpc('match_content', {
-    query_embedding: queryEmbedding,
-    in_business_id: businessId,
-    match_count: topK,
-    similarity_threshold: 0.1,
-  })
-
-  // If no results, try with even lower threshold
-  if (!data || data.length === 0) {
-    const { data: fallbackData, error: fallbackError } = await supabaseAdmin.rpc('match_content', {
+  try {
+    // Try the stored procedure approach first
+    let { data, error } = await supabaseAdmin.rpc('match_business_chunks', {
+      business_uuid: businessId,
       query_embedding: queryEmbedding,
-      in_business_id: businessId,
       match_count: topK,
-      similarity_threshold: 0,
+      similarity_threshold: 0.1,
     })
 
-    if (fallbackError) throw fallbackError
-    data = fallbackData
+    // If no results, try with even lower threshold
+    if (!data || data.length === 0) {
+      const { data: fallbackData, error: fallbackError } = await supabaseAdmin.rpc('match_business_chunks', {
+        business_uuid: businessId,
+        query_embedding: queryEmbedding,
+        match_count: topK,
+        similarity_threshold: 0,
+      })
+
+      if (!fallbackError && fallbackData) {
+        data = fallbackData
+      }
+    }
+
+    if (!error && data && data.length > 0) {
+      return data as { id: string; page_url: string; page_title: string; content: string; similarity: number }[]
+    }
+  } catch (err) {
+    console.warn('Stored procedure search failed, trying direct table query:', err)
   }
 
-  if (error) throw error
-  return data as { id: string; url: string; title: string; content: string; similarity: number; source_type: string }[]
+  // Fallback: Direct table query approach
+  try {
+    const chunkTableName = `chunks_${businessId.replace(/-/g, '')}`
+
+    // Query the chunk table directly
+    const { data: chunks, error: chunkError } = await supabaseAdmin
+      .from(chunkTableName as any)
+      .select(`
+        id,
+        content,
+        embedding,
+        page_id,
+        pages!inner(url, title, business_id)
+      `)
+      .not('embedding', 'is', null)
+      .eq('pages.business_id', businessId)
+      .limit(topK * 2) // Get more than needed for similarity calculation
+
+    if (chunkError) {
+      console.error('Direct chunk table query failed:', chunkError)
+      return []
+    }
+
+    if (!chunks || chunks.length === 0) {
+      return []
+    }
+
+    // Calculate similarity and sort
+    const results = chunks
+      .map((chunk: any) => {
+        const similarity = cosineSimilarity(queryEmbedding, chunk.embedding)
+        return {
+          id: chunk.id,
+          page_url: chunk.pages.url,
+          page_title: chunk.pages.title,
+          content: chunk.content,
+          similarity
+        }
+      })
+      .filter(result => result.similarity > 0.1) // Filter by similarity threshold
+      .sort((a, b) => b.similarity - a.similarity) // Sort by similarity desc
+      .slice(0, topK) // Take top K
+
+    return results
+  } catch (err) {
+    console.error('Direct table query also failed:', err)
+    return []
+  }
+}
+
+// Helper function to calculate cosine similarity
+function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  if (vecA.length !== vecB.length) return 0
+
+  let dotProduct = 0
+  let normA = 0
+  let normB = 0
+
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i]
+    normA += vecA[i] * vecA[i]
+    normB += vecB[i] * vecB[i]
+  }
+
+  if (normA === 0 || normB === 0) return 0
+
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB))
 }
 
 // Process document content based on file type
