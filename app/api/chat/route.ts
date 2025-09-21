@@ -44,16 +44,23 @@ export async function POST(request: Request) {
 
       if (textMatches && textMatches.length > 0) {
         context = textMatches.map(m => `Title: ${m.title}\nContent: ${m.raw_content}`).join('\n\n')
-        sources = textMatches.map(m => ({ title: m.title, url: m.url }))
+        // Clean Unicode characters from text search sources too
+        sources = textMatches.map(m => ({
+          title: m.title.replace(/[^\x00-\xFF]/g, '?'),
+          url: m.url.replace(/[^\x00-\xFF]/g, '')
+        }))
       }
     } else {
       // Prepare context from vector matches
       context = matches.map(m => `Title: ${m.page_title}\nContent: ${m.content}`).join('\n\n')
 
-      // Get unique sources
+      // Get unique sources - clean any unicode characters that could cause header issues
       sources = matches.reduce((acc, m) => {
         if (!acc.find(s => s.url === m.page_url)) {
-          acc.push({ title: m.page_title, url: m.page_url })
+          // Remove or replace problematic Unicode characters
+          const cleanTitle = m.page_title.replace(/[^\x00-\xFF]/g, '?') // Replace non-ASCII with ?
+          const cleanUrl = m.page_url.replace(/[^\x00-\xFF]/g, '') // Remove non-ASCII from URLs
+          acc.push({ title: cleanTitle, url: cleanUrl })
         }
         return acc
       }, [] as { title: string; url: string }[])
@@ -97,7 +104,9 @@ export async function POST(request: Request) {
       async start(controller) {
         try {
           for await (const chunk of result.textStream) {
-            controller.enqueue(new TextEncoder().encode(`0:"${chunk}"\n`))
+            // Properly escape the chunk content for JSON
+            const escapedChunk = JSON.stringify(chunk)
+            controller.enqueue(new TextEncoder().encode(`0:${escapedChunk}\n`))
           }
           controller.close()
         } catch (error) {
@@ -109,7 +118,7 @@ export async function POST(request: Request) {
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
-        'X-Sources': JSON.stringify(sources),
+        'X-Sources': Buffer.from(JSON.stringify(sources), 'utf8').toString('base64'),
       },
     })
 

@@ -140,7 +140,8 @@ export default function ChatPage() {
       let messageSources: Source[] = []
       if (sourcesHeader) {
         try {
-          messageSources = JSON.parse(sourcesHeader)
+          const decodedSources = atob(sourcesHeader)
+          messageSources = JSON.parse(decodedSources)
         } catch (err) {
           console.error('Failed to parse sources:', err)
         }
