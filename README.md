@@ -1,4 +1,4 @@
-# RAAG Chatbots
+# Trovix.ai
 
 Create an AI chatbot trained on your website content.
 
@@ -6,7 +6,7 @@ Create an AI chatbot trained on your website content.
 - Next.js 14 (App Router) + TailwindCSS
 - Supabase (Postgres + pgvector)
 - OpenAI API (embeddings + chat)
-- Firecrawl API (website crawler)
+- GroqCrawl (custom website crawler using Puppeteer)
 
 ## Getting Started
 
@@ -23,7 +23,6 @@ SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 OPENAI_API_KEY=...
-FIRECRAWL_API_KEY=...
 ```
 
 3. Set up Supabase schema:
@@ -36,8 +35,9 @@ pnpm dev
 Open `http://localhost:3000`.
 
 ## How it works
-- Enter a website URL on the home page.
-- The app calls Firecrawl to get public pages and extracts clean text.
+- Register your business and enter a website URL.
+- The app uses GroqCrawl (custom Puppeteer-based crawler) to discover and scrape website pages.
+- Users can select specific pages to crawl from the discovered URLs.
 - Page contents are embedded with OpenAI and stored in Supabase `pages` with a `vector` column.
 - Chat queries generate an embedding, retrieve the most similar pages, and the LLM answers with citations.
 
@@ -58,8 +58,8 @@ For custom JS widgets, you can serve assets under `/widget` and render a floatin
 
 ## Notes
 - Change OpenAI models in `lib/openai.ts` if desired.
-- Adjust crawl limits and text filtering in `lib/firecrawl.ts`.
-- Add auth/tenancy by adding a `businesses` table and a foreign key on `pages`.
+- Adjust crawl limits and text filtering in `lib/groqcrawl.ts`.
+- Business registration and tenancy is implemented with `businesses` table and foreign keys on `pages`.
 
 ## License
 MIT

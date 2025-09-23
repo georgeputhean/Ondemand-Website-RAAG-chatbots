@@ -1,6 +1,6 @@
 (function(){
-  const APP_URL = (document.currentScript && document.currentScript.getAttribute('data-app-url')) || window.RAAG_APP_URL || '';
-  if (!APP_URL) { console.warn('[RAAG Widget] Missing data-app-url'); return; }
+  const APP_URL = (document.currentScript && document.currentScript.getAttribute('data-app-url')) || window.TROVIX_APP_URL || '';
+  if (!APP_URL) { console.warn('[Trovix Widget] Missing data-app-url'); return; }
   const button = document.createElement('button');
   button.textContent = 'Chat with us';
   button.style.position = 'fixed';

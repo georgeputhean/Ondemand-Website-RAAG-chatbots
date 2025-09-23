@@ -26,6 +26,9 @@
       "@/components/*": [
         "components/*"
       ],
+      "@/contexts/*": [
+        "contexts/*"
+      ],
       "@/app/*": [
         "app/*"
       ]
