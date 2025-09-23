@@ -22,6 +22,8 @@ function ConfigureChatbotPageContent() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
+  const [showNotification, setShowNotification] = useState(false)
+  const [redirectCountdown, setRedirectCountdown] = useState(3)
 
   // URL mapping state
   const [discoveredPages, setDiscoveredPages] = useState<DiscoveredPage[]>([])
@@ -260,12 +262,22 @@ function ConfigureChatbotPageContent() {
         throw new Error(result.error || 'Failed to configure chatbot')
       }
 
-      setSuccess(`✅ ${result.message}`)
+      // Show success notification
+      setShowNotification(true)
+      setSuccess(`${result.message}`)
+      setRedirectCountdown(3)
 
-      // Redirect to chat page after success
-      setTimeout(() => {
-        router.push(`/chat?businessId=${businessId}`)
-      }, 2000)
+      // Start countdown timer
+      const countdownInterval = setInterval(() => {
+        setRedirectCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(countdownInterval)
+            router.push(`/chat?businessId=${businessId}`)
+            return 0
+          }
+          return prev - 1
+        })
+      }, 1000)
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -604,6 +616,54 @@ function ConfigureChatbotPageContent() {
           <li>• Your chatbot will be ready with precisely the content you chose</li>
         </ul>
       </div>
+
+      {/* Success Notification Popup */}
+      {showNotification && (
+        <div className="fixed top-4 right-4 z-50 max-w-sm w-full bg-white border border-green-200 rounded-lg shadow-lg transform transition-all duration-300 ease-in-out">
+          <div className="p-4">
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                  <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div className="ml-3 flex-1">
+                <h3 className="text-sm font-medium text-gray-900">
+                  Data Source Created Successfully!
+                </h3>
+                <div className="mt-1 text-sm text-gray-500">
+                  <p>Your chatbot's knowledge base has been built from the selected content.</p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <p className="font-medium text-blue-600">
+                      🚀 Redirecting in {redirectCountdown} second{redirectCountdown !== 1 ? 's' : ''}...
+                    </p>
+                    <button
+                      onClick={() => router.push(`/chat?businessId=${businessId}`)}
+                      className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-md transition-colors"
+                    >
+                      Go Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="ml-4 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowNotification(false)}
+                  className="bg-white rounded-md inline-flex text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                >
+                  <span className="sr-only">Close</span>
+                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
