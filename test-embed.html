@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Embed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 40px;
+            background-color: #f5f5f5;
+        }
+        .content {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="content">
+        <h1>Test Website for Chat Widget</h1>
+        <p>This is a test page to verify that the chat widget works when embedded.</p>
+        <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+        <p>The chat widget should appear in the bottom-right corner of this page.</p>
+    </div>
+
+    <!-- Trovix.ai Chat Widget -->
+    <iframe
+      src="http://localhost:3000/widget?businessId=f08b73e4-ecd9-421a-b762-6a213ff484e4"
+      width="100%"
+      height="100%"
+      frameborder="0"
+      style="position: fixed; bottom: 0; right: 0; width: 100vw; height: 100vh; z-index: 999999; pointer-events: none; border: none;"
+      allow="microphone; camera"
+      scrolling="no">
+    </iframe>
+
+    <style>
+      body { margin-right: 0 !important; }
+      iframe[src*="/widget"] { pointer-events: auto !important; }
+    </style>
+</body>
+</html>
