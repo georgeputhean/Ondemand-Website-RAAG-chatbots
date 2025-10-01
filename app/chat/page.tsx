@@ -43,7 +43,20 @@ function ChatMessage({ message, sources }: { message: Message; sources?: Source[
             <p className="mb-0 text-sm">{message.content}</p>
           ) : (
             <div className="text-sm text-gray-900">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
+              <ReactMarkdown
+                components={{
+                  // Prevent rendering of problematic HTML tags
+                  html: () => null,
+                  head: () => null,
+                  body: () => null,
+                  script: () => null,
+                  style: () => null,
+                  // Ensure paragraphs don't have margin issues
+                  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
             </div>
           )}
         </div>

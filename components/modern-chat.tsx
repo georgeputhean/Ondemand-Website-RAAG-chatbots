@@ -8,13 +8,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import ReactMarkdown from 'react-markdown'
+import VoiceToggle from '@/components/voice-toggle'
 
 interface ModernChatProps {
   chatId?: string
   className?: string
+  businessId?: string
 }
 
-export function ModernChat({ chatId, className }: ModernChatProps) {
+export function ModernChat({ chatId, className, businessId }: ModernChatProps) {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -102,7 +104,20 @@ export function ModernChat({ chatId, className }: ModernChatProps) {
                     <div className="text-sm">{message.content}</div>
                   ) : (
                     <div className="prose prose-sm max-w-none text-gray-900">
-                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                      <ReactMarkdown
+                        components={{
+                          // Prevent rendering of problematic HTML tags
+                          html: () => null,
+                          head: () => null,
+                          body: () => null,
+                          script: () => null,
+                          style: () => null,
+                          // Ensure paragraphs don't have margin issues
+                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>
+                        }}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
                     </div>
                   )}
                 </CardContent>
@@ -133,13 +148,25 @@ export function ModernChat({ chatId, className }: ModernChatProps) {
 
       {/* Input Area */}
       <div className="border-t border-gray-200 p-4">
+        {/* Voice Toggle */}
+        <div className="mb-3 flex justify-center">
+          <VoiceToggle
+            businessId={businessId}
+            onTranscription={(text) => setInput(text)}
+            onResponse={(text) => {
+              // When voice responds, we can add it to the chat
+              append({ role: 'assistant', content: text })
+            }}
+          />
+        </div>
+
         <form onSubmit={handleSubmit} className="flex space-x-2">
           <div className="flex-1 relative">
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
+              placeholder="Type your message or use voice..."
               className="min-h-[60px] max-h-[120px] pr-12 resize-none"
               disabled={isLoading}
             />

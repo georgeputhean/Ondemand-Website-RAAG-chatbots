@@ -598,13 +598,29 @@ function ConfigureChatbotPageContent() {
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? 'Configuring Chatbot...' : 'Configure Chatbot'}
-        </button>
+        <div className="space-y-4">
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Configuring Chatbot...' : 'Configure Chatbot'}
+          </button>
+
+          {/* Voice Configuration Button */}
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => router.push(`/voice-config?businessId=${businessId}`)}
+              className="inline-flex items-center px-6 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-300 rounded-lg font-medium text-gray-700 hover:text-gray-900 transition-colors"
+            >
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+              Configure Voice Agent
+            </button>
+          </div>
+        </div>
       </form>
 
       <div className="mt-8 p-6 bg-blue-50 rounded-lg">

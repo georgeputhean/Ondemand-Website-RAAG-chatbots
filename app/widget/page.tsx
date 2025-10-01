@@ -40,7 +40,20 @@ function ChatMessage({ message, sources }: { message: Message; sources?: Source[
           <p className="mb-0">{message.content}</p>
         ) : (
           <div className="prose prose-sm max-w-none">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <ReactMarkdown
+              components={{
+                // Prevent rendering of problematic HTML tags
+                html: () => null,
+                head: () => null,
+                body: () => null,
+                script: () => null,
+                style: () => null,
+                // Ensure paragraphs don't have margin issues
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
           </div>
         )}
         {sources && sources.length > 0 && (
@@ -73,7 +86,7 @@ function ChatMessage({ message, sources }: { message: Message; sources?: Source[
 
 function ChatWidget() {
   const searchParams = useSearchParams()
-  const businessId = searchParams.get('businessId') || searchParams.get('business_id')
+  const [businessId, setBusinessId] = useState<string | null>(null)
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -83,10 +96,12 @@ function ChatWidget() {
   const [isMounted, setIsMounted] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Ensure component only renders on client-side
+  // Ensure component only renders on client-side and get businessId
   useEffect(() => {
     setIsMounted(true)
-  }, [])
+    const id = searchParams.get('businessId') || searchParams.get('business_id')
+    setBusinessId(id)
+  }, [searchParams])
 
   // Fetch business name when component mounts (client-side only)
   useEffect(() => {
@@ -215,6 +230,7 @@ function ChatWidget() {
     }
   }
 
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -222,10 +238,15 @@ function ChatWidget() {
     }
   }
 
-  // Don't render until mounted on client-side
-  if (!isMounted) {
+  // Don't render until mounted on client-side and businessId is available
+  if (!isMounted || businessId === null) {
     return (
-      <div className="fixed bottom-6 right-6 z-50">
+      <div style={{
+        position: 'fixed',
+        bottom: '24px',
+        right: '24px',
+        zIndex: 999999
+      }}>
         <div className="h-16 w-16 rounded-full bg-gray-200 animate-pulse"></div>
       </div>
     )
@@ -233,7 +254,12 @@ function ChatWidget() {
 
   if (!isOpen) {
     return (
-      <div className="fixed bottom-6 right-6 z-50">
+      <div style={{
+        position: 'fixed',
+        bottom: '24px',
+        right: '24px',
+        zIndex: 999999
+      }}>
         <Button
           onClick={() => setIsOpen(true)}
           size="icon"
@@ -246,7 +272,14 @@ function ChatWidget() {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 w-96 h-[500px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
+    <div style={{
+      position: 'fixed',
+      bottom: '24px',
+      right: '24px',
+      zIndex: 999999,
+      width: '384px',
+      height: '500px'
+    }} className="bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between bg-blue-600 text-white px-4 py-3">
         <div className="flex items-center space-x-3">
@@ -336,6 +369,8 @@ function ChatWidget() {
         )}
       </div>
 
+
+
       {/* Input */}
       <div className="border-t border-gray-200 p-3">
         <form onSubmit={handleSubmit} className="flex gap-2">
@@ -366,7 +401,12 @@ function ChatWidget() {
 const ClientOnlyWidget = dynamic(() => Promise.resolve(ChatWidget), {
   ssr: false,
   loading: () => (
-    <div className="fixed bottom-6 right-6 z-50">
+    <div style={{
+      position: 'fixed',
+      bottom: '24px',
+      right: '24px',
+      zIndex: 999999
+    }}>
       <div className="h-16 w-16 rounded-full bg-gray-200 animate-pulse"></div>
     </div>
   )
@@ -378,24 +418,17 @@ function ChatWidgetContent() {
 
 export default function ChatWidgetPage() {
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      width: '100vw',
-      height: '100vh',
-      pointerEvents: 'none',
-      zIndex: 999999
-    }}>
-      <Suspense fallback={
-        <div className="fixed bottom-6 right-6" style={{ pointerEvents: 'auto' }}>
-          <div className="h-16 w-16 rounded-full bg-gray-200 animate-pulse"></div>
-        </div>
-      }>
-        <div style={{ pointerEvents: 'auto' }}>
-          <ChatWidgetContent />
-        </div>
-      </Suspense>
-    </div>
+    <Suspense fallback={
+      <div style={{
+        position: 'fixed',
+        bottom: '24px',
+        right: '24px',
+        zIndex: 999999
+      }}>
+        <div className="h-16 w-16 rounded-full bg-gray-200 animate-pulse"></div>
+      </div>
+    }>
+      <ChatWidgetContent />
+    </Suspense>
   )
 }
