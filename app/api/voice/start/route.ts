@@ -1,101 +1,84 @@
 import { NextResponse } from 'next/server'
-import { spawn } from 'child_process'
-import path from 'path'
 
-// Store active voice processes
-const voiceProcesses = new Map<string, any>()
+// Voice server URL from environment variable
+const VOICE_SERVER_URL = process.env.NEXT_PUBLIC_VOICE_SERVER_URL || 'http://localhost:7860'
 
+// Check voice server health and connect
 export async function POST(request: Request) {
   try {
     const { businessId } = await request.json()
 
-    // Check if there's already a voice server running for this business
-    const processKey = businessId || 'default'
+    // Check if voice server is healthy
+    const healthResponse = await fetch(`${VOICE_SERVER_URL}/health`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    })
 
-    if (voiceProcesses.has(processKey)) {
-      return NextResponse.json({
-        status: 'already_running',
-        port: 7860 + (businessId ? parseInt(businessId.slice(-2), 16) % 100 : 0)
-      })
+    if (!healthResponse.ok) {
+      return NextResponse.json(
+        {
+          error: 'Voice server is not responding. Please try again later.',
+          serverUrl: VOICE_SERVER_URL
+        },
+        { status: 503 }
+      )
     }
 
-    // Start voice server process
-    const voiceServerPath = path.join(process.cwd(), 'voice-server')
-    const port = 7860 // Use fixed port for now
+    const healthData = await healthResponse.json()
 
-    const env = {
-      ...process.env,
-      DEEPGRAM_API_KEY: process.env.DEEPGRAM_API_KEY,
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    if (!healthData.ready) {
+      return NextResponse.json(
+        { error: 'Voice server is not ready' },
+        { status: 503 }
+      )
     }
-
-    const args = ['run', 'python', 'simple_server.py', '--port', port.toString()]
-    if (businessId) {
-      args.push('--business-id', businessId)
-    }
-
-    const voiceProcess = spawn('uv', args, {
-      cwd: voiceServerPath,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-
-    // Store the process
-    voiceProcesses.set(processKey, {
-      process: voiceProcess,
-      port,
-      businessId,
-      startTime: Date.now()
-    })
-
-    // Handle process events
-    voiceProcess.on('error', (error) => {
-      console.error('Voice process error:', error)
-      voiceProcesses.delete(processKey)
-    })
-
-    voiceProcess.on('exit', (code) => {
-      console.log(`Voice process exited with code ${code}`)
-      voiceProcesses.delete(processKey)
-    })
-
-    // Log output for debugging
-    voiceProcess.stdout?.on('data', (data) => {
-      console.log(`Voice server stdout: ${data}`)
-    })
-
-    voiceProcess.stderr?.on('data', (data) => {
-      console.error(`Voice server stderr: ${data}`)
-    })
-
-    // Give it a moment to start
-    await new Promise(resolve => setTimeout(resolve, 3000))
 
     return NextResponse.json({
-      status: 'started',
-      port,
-      businessId,
-      processId: voiceProcess.pid
+      status: 'connected',
+      serverStatus: healthData,
+      serverUrl: VOICE_SERVER_URL,
+      businessId
     })
 
   } catch (error) {
-    console.error('Voice start error:', error)
+    console.error('Voice connection error:', error)
     return NextResponse.json(
-      { error: 'Failed to start voice server' },
+      {
+        error: 'Failed to connect to voice server.',
+        serverUrl: VOICE_SERVER_URL
+      },
       { status: 500 }
     )
   }
 }
 
+// Get voice server status
 export async function GET() {
-  // Return status of all running voice servers
-  const status = Array.from(voiceProcesses.entries()).map(([key, info]) => ({
-    key,
-    port: info.port,
-    businessId: info.businessId,
-    uptime: Date.now() - info.startTime,
-    pid: info.process.pid
-  }))
+  try {
+    const statusResponse = await fetch(`${VOICE_SERVER_URL}/status`, {
+      cache: 'no-store'
+    })
 
-  return NextResponse.json({ voiceServers: status })
+    if (!statusResponse.ok) {
+      return NextResponse.json({
+        status: 'offline',
+        serverUrl: VOICE_SERVER_URL
+      })
+    }
+
+    const statusData = await statusResponse.json()
+
+    return NextResponse.json({
+      status: 'online',
+      serverInfo: statusData,
+      serverUrl: VOICE_SERVER_URL
+    })
+
+  } catch (error) {
+    return NextResponse.json({
+      status: 'offline',
+      error: 'Could not reach voice server',
+      serverUrl: VOICE_SERVER_URL
+    })
+  }
 }

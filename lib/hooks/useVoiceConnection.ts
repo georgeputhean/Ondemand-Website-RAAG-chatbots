@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 
+// Voice server URL from environment variable
+const VOICE_SERVER_URL = process.env.NEXT_PUBLIC_VOICE_SERVER_URL || 'http://localhost:7860'
+
 // Speech Recognition interface declaration
 declare global {
   interface Window {
@@ -71,7 +74,6 @@ interface VoiceStatus {
   isListening: boolean
   isSpeaking: boolean
   error?: string
-  port?: number
 }
 
 export function useVoiceConnection(options: VoiceConnectionOptions = {}) {
@@ -208,54 +210,18 @@ export function useVoiceConnection(options: VoiceConnectionOptions = {}) {
     try {
       setStatus(prev => ({ ...prev, isConnecting: true, error: undefined }))
 
-      // Start the voice server with the business ID from the URL
-      const startResponse = await fetch('/api/voice/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessId: options.businessId })
-      })
-
-      if (!startResponse.ok) {
-        const errorData = await startResponse.text()
-        throw new Error(`Voice server startup failed: ${errorData}`)
-      }
-
-      const startData = await startResponse.json()
-      const { port, status } = startData
-
-      let actualPort = port || 7860
-
-      if (status === 'already_running') {
-        // Server already running, check if it's healthy
-        try {
-          const healthResponse = await fetch(`http://localhost:${actualPort}/health`)
-          if (!healthResponse.ok) {
-            throw new Error('Voice server not responding')
-          }
-          const healthData = await healthResponse.json()
-          if (!healthData.ready) {
-            throw new Error('Voice server not ready')
-          }
-        } catch (error) {
-          throw new Error('Voice functionality is currently unavailable. Please try again later.')
+      // Check if voice server is healthy
+      try {
+        const healthResponse = await fetch(`${VOICE_SERVER_URL}/health`)
+        if (!healthResponse.ok) {
+          throw new Error('Voice server not responding')
         }
-      } else {
-        // Wait a moment for server to start
-        await new Promise(resolve => setTimeout(resolve, 3000))
-
-        // Check if voice server is ready
-        try {
-          const healthResponse = await fetch(`http://localhost:${actualPort}/health`)
-          if (!healthResponse.ok) {
-            throw new Error('Voice server not responding')
-          }
-          const healthData = await healthResponse.json()
-          if (!healthData.ready) {
-            throw new Error('Voice server not ready')
-          }
-        } catch (error) {
-          throw new Error('Voice functionality is currently unavailable. Please try again later.')
+        const healthData = await healthResponse.json()
+        if (!healthData.ready) {
+          throw new Error('Voice server not ready')
         }
+      } catch (error) {
+        throw new Error('Voice functionality is currently unavailable. Please try again later.')
       }
 
       // Initialize speech recognition
@@ -346,8 +312,7 @@ export function useVoiceConnection(options: VoiceConnectionOptions = {}) {
         ...prev,
         isVoiceMode: true,
         isConnecting: false,
-        isConnected: true,
-        port: actualPort
+        isConnected: true
       }))
 
       // Notify that voice mode is active
@@ -383,13 +348,6 @@ export function useVoiceConnection(options: VoiceConnectionOptions = {}) {
         synthesisRef.current.cancel()
       }
 
-      // Stop voice server
-      await fetch('/api/voice/stop', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessId: options.businessId })
-      })
-
       setStatus({
         isVoiceMode: false,
         isConnected: false,
@@ -402,7 +360,7 @@ export function useVoiceConnection(options: VoiceConnectionOptions = {}) {
     } catch (error) {
       console.error('Error stopping voice mode:', error)
     }
-  }, [options.businessId])
+  }, [])
 
   // Toggle mute
   const toggleMute = useCallback(() => {

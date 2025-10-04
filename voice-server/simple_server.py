@@ -15,6 +15,7 @@ from typing import Optional
 # Environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+NEXT_APP_URL = os.getenv("NEXT_APP_URL", "http://localhost:3000")
 
 class VoiceAgent:
     """Simple voice agent that can handle HTTP requests."""
@@ -47,7 +48,7 @@ class VoiceAgent:
     async def search_knowledge_base(self, query: str) -> str:
         """Search the knowledge base via RAG API."""
         try:
-            url = "http://localhost:3000/api/chat"
+            url = f"{NEXT_APP_URL}/api/chat"
             payload = {
                 "messages": [{"role": "user", "content": query}],
                 "business_id": self.business_id  # Use snake_case to match schema
